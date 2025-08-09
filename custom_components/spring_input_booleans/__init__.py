@@ -1,5 +1,6 @@
 """Spring Input Booleans integration for Home Assistant."""
 import asyncio
+import hashlib
 import logging
 from typing import Any
 
@@ -139,13 +140,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 
                 _LOGGER.info("Sending notification: %s", notification_message)
                 
+                # Create a shortened tag to avoid APNS collapse ID length limit (64 bytes)
+                # Use a hash of the entity ID to ensure uniqueness while keeping it short
+                entity_hash = hashlib.md5(changed_entity_id.encode()).hexdigest()[:8]
+                short_tag = f"sib_{entity_hash}"
+                _LOGGER.debug("Using notification tag '%s' (length: %d) for entity %s", 
+                            short_tag, len(short_tag), changed_entity_id)
+                
                 # Prepare notification data with actions
                 notification_data = {
                     "title": "Spring Input Boolean",
                     "message": notification_message,
                     "data": {
                         "priority": "normal",
-                        "tag": f"spring_input_boolean_{changed_entity_id}",
+                        "tag": short_tag,
                         "actions": [
                             {"action": f"SIB_OFF_10::{changed_entity_id}", "title": "Off for 10s"},
                             {"action": f"SIB_OFF_20::{changed_entity_id}", "title": "Off for 20s"},
