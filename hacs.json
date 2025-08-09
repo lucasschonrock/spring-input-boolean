@@ -1,0 +1,7 @@
+{
+  "name": "Spring Input Booleans",
+  "render_readme": true,
+  "domains": ["input_boolean"],
+  "iot_class": "Local Polling",
+  "homeassistant": "2023.1.0"
+}

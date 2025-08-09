@@ -1,0 +1,12 @@
+{
+  "domain": "spring_input_booleans",
+  "name": "Spring Input Booleans",
+  "version": "1.0.0",
+  "documentation": "https://github.com/lucasschonrock/hacs-spring-input-booleans",
+  "issue_tracker": "https://github.com/lucasschonrock/hacs-spring-input-booleans/issues",
+  "dependencies": [],
+  "codeowners": ["@lucasschonrock"],
+  "requirements": [],
+  "config_flow": true,
+  "iot_class": "local_polling"
+}
