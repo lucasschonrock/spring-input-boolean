@@ -38,6 +38,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry.data
     
+    # Store active delays for action overrides
+    hass.data.setdefault(f"{DOMAIN}_delays", {})
+    
     # Add options update listener
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     
@@ -65,6 +68,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     processing_entities = {}  # entity_id -> timestamp when we started processing
     import time
     
+    # Register service for handling notification actions
+    async def handle_notification_action(call):
+        """Handle notification action callbacks."""
+        action = call.data.get("action")
+        target_entity_id = call.data.get("entity_id")
+        
+        # Only handle if this is our entity
+        if target_entity_id != entity_id:
+            return
+            
+        _LOGGER.info("Received notification action '%s' for %s", action, target_entity_id)
+        
+        # Store the action override in hass.data
+        delay_key = f"{DOMAIN}_delays"
+        if action == "off_10":
+            hass.data[delay_key][target_entity_id] = 10
+        elif action == "off_20":
+            hass.data[delay_key][target_entity_id] = 20
+        elif action == "reactivate_now":
+            hass.data[delay_key][target_entity_id] = 0
+        
+        _LOGGER.debug("Set delay override for %s: %s seconds", target_entity_id, hass.data[delay_key].get(target_entity_id))
+    
+    # Register the service (one per device to avoid conflicts)
+    service_name = f"handle_action_{entity_id.replace('.', '_')}"
+    hass.services.async_register(DOMAIN, service_name, handle_notification_action)
+    
+    # Store service name for cleanup
+    entry.async_on_unload(lambda: hass.services.async_remove(DOMAIN, service_name))
+    
     async def async_handle_state_change(changed_entity_id: str, new_state, old_state) -> None:
         """Async function to handle the state change with delay."""
         # Only process if this is our configured entity
@@ -88,56 +121,74 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Send notification if the boolean was turned off and notifications are enabled
             if (new_state_value == "off" and old_state.state == "on" and enable_notifications):
                 entity_name = new_state.attributes.get("friendly_name", changed_entity_id)
-                notification_message = f"Input boolean '{entity_name}' was turned off"
+                notification_message = f"Input boolean '{entity_name}' was turned off and will reactivate in {delay_seconds} seconds"
                 
                 _LOGGER.info("Sending notification: %s", notification_message)
                 
-                # Prepare notification data
+                # Create unique service call for actions
+                action_service = f"{DOMAIN}.{service_name}"
+                
+                # Prepare notification data with actions
                 notification_data = {
                     "title": "Spring Input Boolean",
                     "message": notification_message,
                     "data": {
                         "priority": "normal",
-                        "tag": "spring_input_boolean"
+                        "tag": f"spring_input_boolean_{changed_entity_id}",
+                        "actions": [
+                            {
+                                "action": f"{action_service}",
+                                "title": "Off for 10s",
+                                "data": {"action": "off_10", "entity_id": changed_entity_id}
+                            },
+                            {
+                                "action": f"{action_service}",
+                                "title": "Off for 20s", 
+                                "data": {"action": "off_20", "entity_id": changed_entity_id}
+                            },
+                            {
+                                "action": f"{action_service}",
+                                "title": "Reactivate Now",
+                                "data": {"action": "reactivate_now", "entity_id": changed_entity_id}
+                            }
+                        ]
                     }
                 }
                 
-                # Add target entity IDs if specified
+                # Only send to specific targets if specified, otherwise don't send at all
                 if phone_entity_ids:
                     notification_data["target"] = phone_entity_ids
-                
-                # Send notification using the configured service
-                try:
-                    await hass.services.async_call(
-                        "notify",
-                        notification_service,
-                        notification_data,
-                        blocking=False
-                    )
-                    _LOGGER.debug("Notification sent successfully via notify.%s", notification_service)
-                except Exception as e:
-                    _LOGGER.warning("Failed to send notification via notify.%s: %s", notification_service, e)
                     
-                    # Fallback: Try the default notify service if the configured one failed
-                    if notification_service != "notify":
-                        try:
-                            fallback_data = notification_data.copy()
-                            # Remove target for fallback to avoid errors
-                            if "target" in fallback_data:
-                                del fallback_data["target"]
-                            
-                            await hass.services.async_call(
-                                "notify",
-                                "notify",
-                                fallback_data,
-                                blocking=False
-                            )
-                            _LOGGER.debug("Notification sent successfully via fallback notify.notify")
-                        except Exception as e2:
-                            _LOGGER.warning("Failed to send notification via fallback notify.notify: %s", e2)
+                    # Send notification using the configured service
+                    try:
+                        await hass.services.async_call(
+                            "notify",
+                            notification_service,
+                            notification_data,
+                            blocking=False
+                        )
+                        _LOGGER.debug("Notification sent successfully via notify.%s to targets: %s", notification_service, phone_entity_ids)
+                    except Exception as e:
+                        _LOGGER.warning("Failed to send notification via notify.%s: %s", notification_service, e)
+                else:
+                    _LOGGER.debug("No phone entity IDs configured, skipping notification")
             
-            # Wait configured delay before reversing the state
-            await asyncio.sleep(delay_seconds)
+            # Check for action override and use that delay instead
+            delay_key = f"{DOMAIN}_delays"
+            actual_delay = hass.data[delay_key].get(changed_entity_id, delay_seconds)
+            
+            # Clear the override after using it
+            if changed_entity_id in hass.data[delay_key]:
+                del hass.data[delay_key][changed_entity_id]
+                _LOGGER.debug("Using action override delay: %d seconds for %s", actual_delay, changed_entity_id)
+            else:
+                _LOGGER.debug("Using default delay: %d seconds for %s", actual_delay, changed_entity_id)
+            
+            # Wait for the actual delay (which might be overridden by action)
+            if actual_delay > 0:
+                await asyncio.sleep(actual_delay)
+            else:
+                _LOGGER.debug("Immediate reactivation requested for %s", changed_entity_id)
             
             # Double-check: Make sure the entity still exists and hasn't changed again
             current_state = hass.states.get(changed_entity_id)
@@ -174,7 +225,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 changed_entity_id,
                 new_state_value,
                 old_state.state,
-                delay_seconds
+                actual_delay
             )
             
         finally:
