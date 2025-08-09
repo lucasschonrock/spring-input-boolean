@@ -30,8 +30,7 @@
     },
     "abort": {
       "already_configured": "This input_boolean is already configured",
-      "no_input_booleans": "No input_boolean entities found",
-      "use_discovery": "This integration uses automatic discovery. Look for discovered Spring Input Boolean devices in the 'Discovered' section below."
+      "no_input_booleans": "No input_boolean entities found"
     }
   },
   "options": {
