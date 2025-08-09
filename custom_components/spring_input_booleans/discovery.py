@@ -1,16 +1,16 @@
 """Discovery for Spring Input Boolean devices."""
 import logging
 
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import discovery_flow
+from homeassistant.config_entries import ConfigFlow
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.discovery_flow import async_create_flow
 
 from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 
-@callback
-def async_start_discovery(hass: HomeAssistant) -> None:
+async def async_start_discovery(hass: HomeAssistant) -> None:
     """Start discovery for input_boolean entities."""
     _LOGGER.debug("Starting discovery for input_boolean entities")
     
@@ -28,6 +28,16 @@ def async_start_discovery(hass: HomeAssistant) -> None:
         # Create unique identifier for this device
         unique_id = f"spring_{entity_id}"
         
+        # Check if already configured
+        existing_entries = hass.config_entries.async_entries(DOMAIN)
+        already_configured = any(
+            entry.unique_id == unique_id for entry in existing_entries
+        )
+        
+        if already_configured:
+            _LOGGER.debug("Input boolean %s already configured, skipping", entity_id)
+            continue
+        
         _LOGGER.debug("Discovered input_boolean: %s (%s)", entity_id, friendly_name)
         
         # Create discovery info
@@ -38,33 +48,9 @@ def async_start_discovery(hass: HomeAssistant) -> None:
         }
         
         # Start discovery flow for this entity
-        discovery_flow.async_create_flow(
+        async_create_flow(
             hass,
             DOMAIN,
             context={"source": "discovery"},
             data=discovery_info,
         )
-
-
-@callback 
-def async_process_discovery(hass: HomeAssistant, entity_id: str) -> None:
-    """Process discovery for a single input_boolean entity."""
-    state = hass.states.get(entity_id)
-    if not state:
-        return
-        
-    friendly_name = state.attributes.get("friendly_name", entity_id)
-    unique_id = f"spring_{entity_id}"
-    
-    discovery_info = {
-        "entity_id": entity_id,
-        "name": f"{friendly_name} Spring Configuration", 
-        "unique_id": unique_id,
-    }
-    
-    discovery_flow.async_create_flow(
-        hass,
-        DOMAIN,
-        context={"source": "discovery"},
-        data=discovery_info,
-    )

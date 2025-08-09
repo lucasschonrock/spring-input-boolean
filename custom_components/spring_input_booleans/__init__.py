@@ -27,7 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Spring Input Booleans component."""
     # Start discovery when the component loads
-    hass.async_create_task(async_start_discovery(hass))
+    await async_start_discovery(hass)
     return True
 
 
