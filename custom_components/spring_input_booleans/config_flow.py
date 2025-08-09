@@ -56,9 +56,15 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER):
                     config_data[CONF_MONITORED_ENTITIES] = input_booleans
                 else:
-                    selected_entities = user_input.get(CONF_MONITORED_ENTITIES, [])
-                    if isinstance(selected_entities, str):
-                        selected_entities = [selected_entities]
+                    # Parse comma-separated entity IDs
+                    entity_string = user_input.get(CONF_MONITORED_ENTITIES, "")
+                    if isinstance(entity_string, str):
+                        selected_entities = [
+                            entity.strip() for entity in entity_string.split(",") 
+                            if entity.strip() and entity.strip() in input_booleans
+                        ]
+                    else:
+                        selected_entities = []
                     config_data[CONF_MONITORED_ENTITIES] = selected_entities
                 
                 # Handle notifications
@@ -100,10 +106,8 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Add entity selection if auto-discover is disabled and entities exist
         if user_input is None or not user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER):
             if input_booleans:
-                schema_dict[vol.Optional(CONF_MONITORED_ENTITIES, default=list(input_booleans.keys()))] = vol.All(
-                    vol.Coerce(list),
-                    [vol.In(list(input_booleans.keys()))]
-                )
+                default_entities = ", ".join(input_booleans.keys())
+                schema_dict[vol.Optional(CONF_MONITORED_ENTITIES, default=default_entities)] = str
         
         # Add notification settings
         schema_dict[vol.Optional(CONF_ENABLE_NOTIFICATIONS, default=DEFAULT_ENABLE_NOTIFICATIONS)] = bool
@@ -119,6 +123,14 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if user_input and user_input.get(CONF_NOTIFICATION_SERVICE) == "custom":
                 schema_dict[vol.Optional("custom_service_name", default="")] = str
 
+        # Create helpful description with entity list
+        entity_list = ""
+        if input_booleans:
+            entity_names = list(input_booleans.keys())[:5]  # Show first 5
+            entity_list = f"\n\nAvailable entities: {', '.join(entity_names)}"
+            if len(input_booleans) > 5:
+                entity_list += f" (and {len(input_booleans) - 5} more)"
+
         return self.async_show_form(
             step_id="user",
             data_schema=vol.Schema(schema_dict),
@@ -127,7 +139,7 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "description": (
                     "This integration will automatically reverse any changes made to input_boolean entities. "
                     "When an input_boolean is turned on, it will immediately be turned off, and vice versa. "
-                    f"Found {len(input_booleans)} input boolean(s) in your system."
+                    f"Found {len(input_booleans)} input boolean(s) in your system.{entity_list}"
                 )
             }
         )
@@ -183,8 +195,18 @@ class SpringInputBooleansOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             # Update the configuration with new entity selection
             current_data = self.config_entry.data.copy()
-            current_data[CONF_MONITORED_ENTITIES] = user_input.get(CONF_MONITORED_ENTITIES, [])
             current_data[CONF_AUTO_DISCOVER] = user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER)
+            
+            # Parse comma-separated entity IDs
+            entity_string = user_input.get(CONF_MONITORED_ENTITIES, "")
+            if isinstance(entity_string, str):
+                selected_entities = [
+                    entity.strip() for entity in entity_string.split(",") 
+                    if entity.strip() and entity.strip() in input_booleans
+                ]
+            else:
+                selected_entities = []
+            current_data[CONF_MONITORED_ENTITIES] = selected_entities
             
             return self.async_create_entry(title="", data=current_data)
 
@@ -198,10 +220,9 @@ class SpringInputBooleansOptionsFlow(config_entries.OptionsFlow):
         }
 
         if input_booleans:
-            schema_dict[vol.Optional(CONF_MONITORED_ENTITIES, default=monitored_entities)] = vol.All(
-                vol.Coerce(list),
-                [vol.In(list(input_booleans.keys()))]
-            )
+            # Convert list to comma-separated string for display
+            default_entities_str = ", ".join(monitored_entities) if monitored_entities else ""
+            schema_dict[vol.Optional(CONF_MONITORED_ENTITIES, default=default_entities_str)] = str
 
         return self.async_show_form(
             step_id="entities",
