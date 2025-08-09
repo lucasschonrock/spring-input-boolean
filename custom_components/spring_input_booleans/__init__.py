@@ -68,35 +68,41 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     processing_entities = {}  # entity_id -> timestamp when we started processing
     import time
     
-    # Register service for handling notification actions
-    async def handle_notification_action(call):
-        """Handle notification action callbacks."""
-        action = call.data.get("action")
-        target_entity_id = call.data.get("entity_id")
-        
-        # Only handle if this is our entity
-        if target_entity_id != entity_id:
+    # Listen for mobile app actionable notification events
+    @callback
+    def _handle_mobile_app_action(event: Event) -> None:
+        action: str | None = event.data.get("action")
+        if not action or not isinstance(action, str):
             return
-            
-        _LOGGER.info("Received notification action '%s' for %s", action, target_entity_id)
-        
-        # Store the action override in hass.data
+
+        # Expected formats: "SIB_OFF_10::<entity_id>", "SIB_OFF_20::<entity_id>", "SIB_REACTIVATE::<entity_id>"
+        if not action.startswith("SIB_"):
+            return
+
+        try:
+            action_key, target = action.split("::", 1)
+        except ValueError:
+            return
+
+        if target != entity_id:
+            return
+
         delay_key = f"{DOMAIN}_delays"
-        if action == "off_10":
-            hass.data[delay_key][target_entity_id] = 10
-        elif action == "off_20":
-            hass.data[delay_key][target_entity_id] = 20
-        elif action == "reactivate_now":
-            hass.data[delay_key][target_entity_id] = 0
-        
-        _LOGGER.debug("Set delay override for %s: %s seconds", target_entity_id, hass.data[delay_key].get(target_entity_id))
-    
-    # Register the service (one per device to avoid conflicts)
-    service_name = f"handle_action_{entity_id.replace('.', '_')}"
-    hass.services.async_register(DOMAIN, service_name, handle_notification_action)
-    
-    # Store service name for cleanup
-    entry.async_on_unload(lambda: hass.services.async_remove(DOMAIN, service_name))
+        if action_key == "SIB_OFF_10":
+            hass.data[delay_key][entity_id] = 10
+            _LOGGER.info("Action received: Off 10s for %s", entity_id)
+        elif action_key == "SIB_OFF_20":
+            hass.data[delay_key][entity_id] = 20
+            _LOGGER.info("Action received: Off 20s for %s", entity_id)
+        elif action_key == "SIB_REACTIVATE":
+            hass.data[delay_key][entity_id] = 0
+            _LOGGER.info("Action received: Reactivate now for %s", entity_id)
+
+    # Register listeners for both Android/iOS mobile app events
+    remove_mobile_app = hass.bus.async_listen("mobile_app_notification_action", _handle_mobile_app_action)
+    remove_ios = hass.bus.async_listen("ios.action_fired", _handle_mobile_app_action)
+    entry.async_on_unload(remove_mobile_app)
+    entry.async_on_unload(remove_ios)
     
     async def async_handle_state_change(changed_entity_id: str, new_state, old_state) -> None:
         """Async function to handle the state change with delay."""
@@ -125,9 +131,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 
                 _LOGGER.info("Sending notification: %s", notification_message)
                 
-                # Create unique service call for actions
-                action_service = f"{DOMAIN}.{service_name}"
-                
                 # Prepare notification data with actions
                 notification_data = {
                     "title": "Spring Input Boolean",
@@ -136,21 +139,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         "priority": "normal",
                         "tag": f"spring_input_boolean_{changed_entity_id}",
                         "actions": [
-                            {
-                                "action": f"{action_service}",
-                                "title": "Off for 10s",
-                                "data": {"action": "off_10", "entity_id": changed_entity_id}
-                            },
-                            {
-                                "action": f"{action_service}",
-                                "title": "Off for 20s", 
-                                "data": {"action": "off_20", "entity_id": changed_entity_id}
-                            },
-                            {
-                                "action": f"{action_service}",
-                                "title": "Reactivate Now",
-                                "data": {"action": "reactivate_now", "entity_id": changed_entity_id}
-                            }
+                            {"action": f"SIB_OFF_10::{changed_entity_id}", "title": "Off for 10s"},
+                            {"action": f"SIB_OFF_20::{changed_entity_id}", "title": "Off for 20s"},
+                            {"action": f"SIB_REACTIVATE::{changed_entity_id}", "title": "Reactivate Now"}
                         ]
                     }
                 }
