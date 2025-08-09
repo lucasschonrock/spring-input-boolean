@@ -5,9 +5,8 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.helpers import selector
 
 from .const import (
     DOMAIN,
@@ -34,77 +33,6 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Handle the initial step."""
-        if user_input is not None:
-            # Store initial config and move to entity selection
-            self._config_data = {
-                CONF_AUTO_DISCOVER: user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER),
-            }
-            
-            if user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER):
-                # Go to entity selection step
-                return await self.async_step_entities()
-            else:
-                # Skip entity selection, go to notifications
-                self._config_data[CONF_MONITORED_ENTITIES] = []
-                return await self.async_step_notifications()
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_AUTO_DISCOVER, default=DEFAULT_AUTO_DISCOVER): bool,
-            }),
-            description_placeholders={
-                "description": (
-                    "This integration will automatically reverse any changes made to input_boolean entities. "
-                    "When an input_boolean is turned on, it will immediately be turned off, and vice versa."
-                )
-            }
-        )
-
-    async def async_step_entities(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle entity selection step."""
-        # Get all input_boolean entities
-        input_booleans = {}
-        for entity_id, state in self.hass.states.async_all():
-            if entity_id.startswith("input_boolean."):
-                friendly_name = state.attributes.get("friendly_name", entity_id)
-                input_booleans[entity_id] = f"{friendly_name} ({entity_id})"
-
-        if not input_booleans:
-            # No input booleans found, skip to notifications
-            self._config_data[CONF_MONITORED_ENTITIES] = []
-            return await self.async_step_notifications()
-
-        if user_input is not None:
-            # Store selected entities
-            self._config_data[CONF_MONITORED_ENTITIES] = user_input.get(CONF_MONITORED_ENTITIES, [])
-            return await self.async_step_notifications()
-
-        return self.async_show_form(
-            step_id="entities",
-            data_schema=vol.Schema({
-                vol.Optional(CONF_MONITORED_ENTITIES, default=list(input_booleans.keys())): selector.SelectSelector(
-                    selector.SelectSelectorConfig(
-                        options=[{"value": k, "label": v} for k, v in input_booleans.items()],
-                        multiple=True,
-                        mode=selector.SelectSelectorMode.CHECKBOX
-                    )
-                ),
-            }),
-            description_placeholders={
-                "description": (
-                    f"Found {len(input_booleans)} input boolean(s) in your system. "
-                    "Select which ones you want to apply the spring behavior to."
-                )
-            }
-        )
-
-    async def async_step_notifications(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle notification configuration step."""
         errors = {}
         
         if user_input is not None:
@@ -113,10 +41,27 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 not user_input.get("custom_service_name")):
                 errors["custom_service_name"] = "custom_service_required"
             else:
-                # Process the configuration
-                config_data = self._config_data.copy()
-                config_data[CONF_ENABLE_NOTIFICATIONS] = user_input.get(CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS)
+                # Get all input_boolean entities for selection
+                input_booleans = [
+                    entity_id for entity_id in self.hass.states.async_entity_ids("input_boolean")
+                ]
                 
+                # Process the configuration
+                config_data = {
+                    CONF_AUTO_DISCOVER: user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER),
+                    CONF_ENABLE_NOTIFICATIONS: user_input.get(CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS),
+                }
+                
+                # Handle entity selection
+                if user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER):
+                    config_data[CONF_MONITORED_ENTITIES] = input_booleans
+                else:
+                    selected_entities = user_input.get(CONF_MONITORED_ENTITIES, [])
+                    if isinstance(selected_entities, str):
+                        selected_entities = [selected_entities]
+                    config_data[CONF_MONITORED_ENTITIES] = selected_entities
+                
+                # Handle notifications
                 if config_data[CONF_ENABLE_NOTIFICATIONS]:
                     # Set notification service
                     if user_input.get(CONF_NOTIFICATION_SERVICE) == "custom":
@@ -124,7 +69,7 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     else:
                         config_data[CONF_NOTIFICATION_SERVICE] = user_input.get(CONF_NOTIFICATION_SERVICE, DEFAULT_NOTIFICATION_SERVICE)
                     
-                    # Set phone entity IDs (convert comma-separated string to list)
+                    # Set phone entity IDs
                     phone_entities = user_input.get(CONF_PHONE_ENTITY_IDS, "").strip()
                     if phone_entities:
                         config_data[CONF_PHONE_ENTITY_IDS] = [
@@ -133,16 +78,35 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     else:
                         config_data[CONF_PHONE_ENTITY_IDS] = []
                 
-                # Create the entry
-                return self.async_create_entry(
-                    title="Spring Input Booleans",
+            # Create the entry
+            return self.async_create_entry(
+                title="Spring Input Booleans",
                     data=config_data
                 )
 
+        # Get all input_boolean entities for display
+        input_booleans = {}
+        for entity_id in self.hass.states.async_entity_ids("input_boolean"):
+            state = self.hass.states.get(entity_id)
+            if state:
+                friendly_name = state.attributes.get("friendly_name", entity_id)
+                input_booleans[entity_id] = f"{friendly_name} ({entity_id})"
+
         # Build the form schema
         schema_dict = {
-            vol.Optional(CONF_ENABLE_NOTIFICATIONS, default=DEFAULT_ENABLE_NOTIFICATIONS): bool,
+            vol.Optional(CONF_AUTO_DISCOVER, default=DEFAULT_AUTO_DISCOVER): bool,
         }
+        
+        # Add entity selection if auto-discover is disabled and entities exist
+        if user_input is None or not user_input.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER):
+            if input_booleans:
+                schema_dict[vol.Optional(CONF_MONITORED_ENTITIES, default=list(input_booleans.keys()))] = vol.All(
+                    vol.Coerce(list),
+                    [vol.In(list(input_booleans.keys()))]
+                )
+        
+        # Add notification settings
+        schema_dict[vol.Optional(CONF_ENABLE_NOTIFICATIONS, default=DEFAULT_ENABLE_NOTIFICATIONS)] = bool
         
         # Add notification-specific fields only if notifications are enabled
         if user_input is None or user_input.get(CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS):
@@ -156,16 +120,19 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 schema_dict[vol.Optional("custom_service_name", default="")] = str
 
         return self.async_show_form(
-            step_id="notifications",
+            step_id="user",
             data_schema=vol.Schema(schema_dict),
             errors=errors,
             description_placeholders={
                 "description": (
-                    "Configure notification settings. You can enable notifications to be sent when "
-                    "input booleans are turned off, before they are automatically turned back on."
+                    "This integration will automatically reverse any changes made to input_boolean entities. "
+                    "When an input_boolean is turned on, it will immediately be turned off, and vice versa. "
+                    f"Found {len(input_booleans)} input boolean(s) in your system."
                 )
             }
         )
+
+
 
     @staticmethod
     @callback
@@ -231,12 +198,9 @@ class SpringInputBooleansOptionsFlow(config_entries.OptionsFlow):
         }
 
         if input_booleans:
-            schema_dict[vol.Optional(CONF_MONITORED_ENTITIES, default=monitored_entities)] = selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=[{"value": k, "label": v} for k, v in input_booleans.items()],
-                    multiple=True,
-                    mode=selector.SelectSelectorMode.CHECKBOX
-                )
+            schema_dict[vol.Optional(CONF_MONITORED_ENTITIES, default=monitored_entities)] = vol.All(
+                vol.Coerce(list),
+                [vol.In(list(input_booleans.keys()))]
             )
 
         return self.async_show_form(
