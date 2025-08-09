@@ -21,87 +21,68 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Spring Input Booleans from a config entry."""
     
-    # Track our own context IDs to prevent loops
-    our_context_ids = set()
-    max_context_ids = 100  # Limit the size of our tracking set
+    # Track entities we're currently processing to prevent loops
+    processing_entities = {}  # entity_id -> timestamp when we started processing
+    import time
     
     async def async_handle_state_change(entity_id: str, new_state, old_state) -> None:
         """Async function to handle the state change with delay."""
-        # Get the new state value
-        new_state_value = new_state.state
-        
-        _LOGGER.debug(
-            "Input boolean %s changed from %s to %s (context: %s, user: %s), waiting 2 seconds before reversing...",
-            entity_id,
-            old_state.state,
-            new_state_value,
-            new_state.context.id if new_state.context else "None",
-            new_state.context.user_id if new_state.context and new_state.context.user_id else "None"
-        )
-        
-        # Wait 2 seconds before reversing the state
-        await asyncio.sleep(2)
-        
-        # Double-check: Make sure the entity still exists and hasn't changed again
-        current_state = hass.states.get(entity_id)
-        if not current_state or current_state.state != new_state_value:
+        try:
+            # Get the new state value
+            new_state_value = new_state.state
+            
             _LOGGER.debug(
-                "Entity %s state changed during delay (from %s to %s), skipping reversal",
+                "Input boolean %s changed from %s to %s (context: %s, user: %s), waiting 2 seconds before reversing...",
+                entity_id,
+                old_state.state,
+                new_state_value,
+                new_state.context.id if new_state.context else "None",
+                new_state.context.user_id if new_state.context and new_state.context.user_id else "None"
+            )
+            
+            # Wait 2 seconds before reversing the state
+            await asyncio.sleep(2)
+            
+            # Double-check: Make sure the entity still exists and hasn't changed again
+            current_state = hass.states.get(entity_id)
+            if not current_state or current_state.state != new_state_value:
+                _LOGGER.debug(
+                    "Entity %s state changed during delay (from %s to %s), skipping reversal",
+                    entity_id,
+                    new_state_value,
+                    current_state.state if current_state else "None"
+                )
+                return
+            
+            # Determine the reverse action
+            if new_state_value == "on":
+                # If it turned on, turn it off
+                service_action = "turn_off"
+            elif new_state_value == "off":
+                # If it turned off, turn it on
+                service_action = "turn_on"
+            else:
+                # Unknown state, skip
+                return
+                
+            # Call the service to reverse the state
+            await hass.services.async_call(
+                "input_boolean",
+                service_action,
+                {"entity_id": entity_id},
+                blocking=True
+            )
+            
+            _LOGGER.info(
+                "Reversed input boolean %s state from %s back to %s after 2-second delay",
                 entity_id,
                 new_state_value,
-                current_state.state if current_state else "None"
-            )
-            return
-        
-        # Determine the reverse action
-        if new_state_value == "on":
-            # If it turned on, turn it off
-            service_action = "turn_off"
-        elif new_state_value == "off":
-            # If it turned off, turn it on
-            service_action = "turn_on"
-        else:
-            # Unknown state, skip
-            return
-            
-        # Call the service to reverse the state and track our context
-        await hass.services.async_call(
-            "input_boolean",
-            service_action,
-            {"entity_id": entity_id},
-            blocking=True
-        )
-        
-        # Track our context ID to prevent loops
-        # Note: We get the context from the state that will be created by our service call
-        # We'll add it to our tracking set so we can ignore the resulting state change
-        await asyncio.sleep(0.1)  # Small delay to ensure state has been updated
-        latest_state = hass.states.get(entity_id)
-        if latest_state and latest_state.context:
-            our_context_ids.add(latest_state.context.id)
-            _LOGGER.debug(
-                "Added context ID %s to tracking set for entity %s",
-                latest_state.context.id,
-                entity_id
+                old_state.state
             )
             
-            # Clean up the tracking set if it gets too large
-            if len(our_context_ids) > max_context_ids:
-                # Remove the oldest half of the entries (convert to list, sort, remove first half)
-                sorted_ids = sorted(our_context_ids)
-                for old_id in sorted_ids[:len(sorted_ids) // 2]:
-                    our_context_ids.discard(old_id)
-                _LOGGER.debug(
-                    "Cleaned up context tracking set, now has %d entries",
-                    len(our_context_ids)
-                )
-        
-        _LOGGER.info(
-            "Reversed input boolean %s state from %s back to %s after 2-second delay",
-            entity_id,
-            new_state_value,
-            old_state.state
-        )
+        finally:
+            # Always remove from processing set when done
+            processing_entities.pop(entity_id, None)
 
     @callback
     def handle_input_boolean_change(event: Event) -> None:
@@ -117,27 +98,44 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Ignore if no state change or if state is None
         if not new_state or not old_state or new_state.state == old_state.state:
             return
-            
-        # Prevent loops: Check if this change was caused by our own service call
-        if new_state.context and new_state.context.id in our_context_ids:
-            _LOGGER.debug(
-                "Ignoring state change for %s - caused by our own service call (context: %s)",
-                entity_id,
-                new_state.context.id
-            )
-            # Remove the context ID from our tracking set to keep it clean
-            our_context_ids.discard(new_state.context.id)
-            return
-            
-        # Additional check: If there's no user_id in context, it might be programmatic
-        # But we still process it unless it's from our own context above
+        
+        # Prevent loops: Check if we're already processing this entity
+        current_time = time.time()
+        if entity_id in processing_entities:
+            # Check if it's been more than 5 seconds (safety cleanup)
+            if current_time - processing_entities[entity_id] < 5:
+                _LOGGER.debug(
+                    "Ignoring state change for %s - already processing (started %d seconds ago)",
+                    entity_id,
+                    int(current_time - processing_entities[entity_id])
+                )
+                return
+            else:
+                # Clean up stale entry
+                _LOGGER.debug("Cleaning up stale processing entry for %s", entity_id)
+                processing_entities.pop(entity_id, None)
+        
+        # Check if this change has a user_id (indicating manual user interaction)
+        # Only process changes that have a user_id OR are from automations with user_id
         if new_state.context and not new_state.context.user_id:
             _LOGGER.debug(
-                "State change for %s has no user_id - might be programmatic but not from us (context: %s)",
+                "Ignoring state change for %s - no user_id, likely programmatic (context: %s)",
                 entity_id,
                 new_state.context.id
             )
+            return
             
+        # Mark this entity as being processed
+        processing_entities[entity_id] = current_time
+        
+        _LOGGER.debug(
+            "Processing state change for %s from %s to %s (user: %s)",
+            entity_id,
+            old_state.state,
+            new_state.state,
+            new_state.context.user_id if new_state.context else "None"
+        )
+        
         # Schedule the async work
         hass.async_add_job(async_handle_state_change, entity_id, new_state, old_state)
     
