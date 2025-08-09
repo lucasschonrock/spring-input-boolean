@@ -71,7 +71,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Listen for mobile app actionable notification events
     @callback
     def _handle_mobile_app_action(event: Event) -> None:
-        action: str | None = event.data.get("action")
+        # Android uses 'action', iOS uses 'actionName'
+        action: str | None = event.data.get("action") or event.data.get("actionName")
         if not action or not isinstance(action, str):
             return
 
@@ -148,19 +149,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 
                 # Only send to specific targets if specified, otherwise don't send at all
                 if phone_entity_ids:
-                    notification_data["target"] = phone_entity_ids
-                    
-                    # Send notification using the configured service
+                    # Resolve service: use notify.notify for aggregator/targets
+                    service_to_call = "notify"
+                    if notification_service not in ("notify", "mobile_app"):
+                        service_to_call = notification_service
+
                     try:
-                        await hass.services.async_call(
-                            "notify",
-                            notification_service,
-                            notification_data,
-                            blocking=False
-                        )
-                        _LOGGER.debug("Notification sent successfully via notify.%s to targets: %s", notification_service, phone_entity_ids)
+                        if service_to_call == "notify":
+                            payload = dict(notification_data)
+                            payload["target"] = phone_entity_ids
+                            await hass.services.async_call(
+                                "notify",
+                                "notify",
+                                payload,
+                                blocking=False,
+                            )
+                            _LOGGER.debug(
+                                "Notification sent via notify.notify to targets: %s",
+                                phone_entity_ids,
+                            )
+                        else:
+                            # Custom notifier (no targets)
+                            await hass.services.async_call(
+                                "notify",
+                                service_to_call,
+                                notification_data,
+                                blocking=False,
+                            )
+                            _LOGGER.debug(
+                                "Notification sent via notify.%s (no explicit targets)",
+                                service_to_call,
+                            )
                     except Exception as e:
-                        _LOGGER.warning("Failed to send notification via notify.%s: %s", notification_service, e)
+                        _LOGGER.warning(
+                            "Failed to send notification via notify.%s: %s",
+                            service_to_call,
+                            e,
+                        )
                 else:
                     _LOGGER.debug("No phone entity IDs configured, skipping notification")
             
