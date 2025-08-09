@@ -10,24 +10,21 @@ from homeassistant.helpers.typing import ConfigType
 
 from .const import (
     DOMAIN,
-    CONF_ENTITY_ID,
-    CONF_DELAY_SECONDS,
-    CONF_ENABLE_NOTIFICATIONS,
     CONF_NOTIFICATION_SERVICE,
     CONF_PHONE_ENTITY_IDS,
-    DEFAULT_DELAY_SECONDS,
-    DEFAULT_ENABLE_NOTIFICATIONS,
+    CONF_ENABLE_NOTIFICATIONS,
+    CONF_MONITORED_ENTITIES,
+    CONF_AUTO_DISCOVER,
     DEFAULT_NOTIFICATION_SERVICE,
+    DEFAULT_ENABLE_NOTIFICATIONS,
+    DEFAULT_AUTO_DISCOVER,
 )
-from .discovery import async_start_discovery
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Spring Input Booleans component."""
-    # Start discovery when the component loads
-    await async_start_discovery(hass)
     return True
 
 
@@ -41,53 +38,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Add options update listener
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     
-    # Get configuration settings for this specific device
+    # Get configuration settings
     config_data = entry.data
-    entity_id = config_data.get(CONF_ENTITY_ID)
-    delay_seconds = config_data.get(CONF_DELAY_SECONDS, DEFAULT_DELAY_SECONDS)
     enable_notifications = config_data.get(CONF_ENABLE_NOTIFICATIONS, DEFAULT_ENABLE_NOTIFICATIONS)
     notification_service = config_data.get(CONF_NOTIFICATION_SERVICE, DEFAULT_NOTIFICATION_SERVICE)
     phone_entity_ids = config_data.get(CONF_PHONE_ENTITY_IDS, [])
+    monitored_entities = config_data.get(CONF_MONITORED_ENTITIES, [])
+    auto_discover = config_data.get(CONF_AUTO_DISCOVER, DEFAULT_AUTO_DISCOVER)
     
-    if not entity_id:
-        _LOGGER.error("No entity_id configured for entry %s", entry.entry_id)
-        return False
+    # If auto_discover is enabled but no entities are specified, monitor all input_booleans
+    if auto_discover and not monitored_entities:
+        monitored_entities = [
+            entity_id for entity_id in hass.states.async_entity_ids("input_boolean")
+        ]
+        _LOGGER.info("Auto-discovery enabled: monitoring all %d input_boolean entities", len(monitored_entities))
     
     _LOGGER.info(
-        "Spring Input Boolean loaded for %s: delay=%ds, notifications=%s, service=%s",
-        entity_id,
-        delay_seconds,
+        "Spring Input Booleans loaded with config: notifications=%s, service=%s, phone_entities=%s, monitoring=%d entities",
         enable_notifications,
-        notification_service
+        notification_service,
+        phone_entity_ids,
+        len(monitored_entities)
     )
     
     # Track entities we're currently processing to prevent loops
     processing_entities = {}  # entity_id -> timestamp when we started processing
     import time
     
-    async def async_handle_state_change(changed_entity_id: str, new_state, old_state) -> None:
+    async def async_handle_state_change(entity_id: str, new_state, old_state) -> None:
         """Async function to handle the state change with delay."""
-        # Only process if this is our configured entity
-        if changed_entity_id != entity_id:
-            return
-            
         try:
             # Get the new state value
             new_state_value = new_state.state
             
             _LOGGER.debug(
-                "Input boolean %s changed from %s to %s (context: %s, user: %s), waiting %d seconds before reversing...",
-                changed_entity_id,
+                "Input boolean %s changed from %s to %s (context: %s, user: %s), waiting 2 seconds before reversing...",
+                entity_id,
                 old_state.state,
                 new_state_value,
                 new_state.context.id if new_state.context else "None",
-                new_state.context.user_id if new_state.context and new_state.context.user_id else "None",
-                delay_seconds
+                new_state.context.user_id if new_state.context and new_state.context.user_id else "None"
             )
             
             # Send notification if the boolean was turned off and notifications are enabled
             if (new_state_value == "off" and old_state.state == "on" and enable_notifications):
-                entity_name = new_state.attributes.get("friendly_name", changed_entity_id)
+                entity_name = new_state.attributes.get("friendly_name", entity_id)
                 notification_message = f"Input boolean '{entity_name}' was turned off"
                 
                 _LOGGER.info("Sending notification: %s", notification_message)
@@ -136,15 +131,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         except Exception as e2:
                             _LOGGER.warning("Failed to send notification via fallback notify.notify: %s", e2)
             
-            # Wait configured delay before reversing the state
-            await asyncio.sleep(delay_seconds)
+            # Wait 2 seconds before reversing the state
+            await asyncio.sleep(2)
             
             # Double-check: Make sure the entity still exists and hasn't changed again
-            current_state = hass.states.get(changed_entity_id)
+            current_state = hass.states.get(entity_id)
             if not current_state or current_state.state != new_state_value:
                 _LOGGER.debug(
                     "Entity %s state changed during delay (from %s to %s), skipping reversal",
-                    changed_entity_id,
+                    entity_id,
                     new_state_value,
                     current_state.state if current_state else "None"
                 )
@@ -165,31 +160,42 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             await hass.services.async_call(
                 "input_boolean",
                 service_action,
-                {"entity_id": changed_entity_id},
+                {"entity_id": entity_id},
                 blocking=True
             )
             
             _LOGGER.info(
-                "Reversed input boolean %s state from %s back to %s after %d-second delay",
-                changed_entity_id,
+                "Reversed input boolean %s state from %s back to %s after 2-second delay",
+                entity_id,
                 new_state_value,
-                old_state.state,
-                delay_seconds
+                old_state.state
             )
             
         finally:
             # Always remove from processing set when done
-            processing_entities.pop(changed_entity_id, None)
+            processing_entities.pop(entity_id, None)
 
     @callback
     def handle_input_boolean_change(event: Event) -> None:
-        """Handle input_boolean state changes and reverse them after a configured delay."""
-        changed_entity_id = event.data.get("entity_id")
+        """Handle input_boolean state changes and reverse them after a 2-second delay."""
+        entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
         
-        # Only process our specific configured entity
-        if changed_entity_id != entity_id:
+        # Only process input_boolean entities
+        if not entity_id or not entity_id.startswith("input_boolean."):
+            return
+            
+        # Handle auto-discovery of new entities
+        if auto_discover and entity_id not in monitored_entities:
+            _LOGGER.info("Auto-discovered new input_boolean: %s", entity_id)
+            monitored_entities.append(entity_id)
+            # Update the config entry to persist the new entity
+            updated_data = entry.data.copy()
+            updated_data[CONF_MONITORED_ENTITIES] = monitored_entities
+            hass.config_entries.async_update_entry(entry, data=updated_data)
+        elif not auto_discover and monitored_entities and entity_id not in monitored_entities:
+            _LOGGER.debug("Ignoring unmonitored entity: %s", entity_id)
             return
             
         # Ignore if no state change or if state is None
@@ -198,43 +204,43 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Prevent loops: Check if we're already processing this entity
         current_time = time.time()
-        if changed_entity_id in processing_entities:
-            # Check if it's been more than 10 seconds (safety cleanup)
-            if current_time - processing_entities[changed_entity_id] < 10:
+        if entity_id in processing_entities:
+            # Check if it's been more than 5 seconds (safety cleanup)
+            if current_time - processing_entities[entity_id] < 5:
                 _LOGGER.debug(
                     "Ignoring state change for %s - already processing (started %d seconds ago)",
-                    changed_entity_id,
-                    int(current_time - processing_entities[changed_entity_id])
+                    entity_id,
+                    int(current_time - processing_entities[entity_id])
                 )
                 return
             else:
                 # Clean up stale entry
-                _LOGGER.debug("Cleaning up stale processing entry for %s", changed_entity_id)
-                processing_entities.pop(changed_entity_id, None)
+                _LOGGER.debug("Cleaning up stale processing entry for %s", entity_id)
+                processing_entities.pop(entity_id, None)
         
         # Check if this change has a user_id (indicating manual user interaction)
         # Only process changes that have a user_id OR are from automations with user_id
         if new_state.context and not new_state.context.user_id:
             _LOGGER.debug(
                 "Ignoring state change for %s - no user_id, likely programmatic (context: %s)",
-                changed_entity_id,
+                entity_id,
                 new_state.context.id
             )
             return
             
         # Mark this entity as being processed
-        processing_entities[changed_entity_id] = current_time
+        processing_entities[entity_id] = current_time
         
         _LOGGER.debug(
             "Processing state change for %s from %s to %s (user: %s)",
-            changed_entity_id,
+            entity_id,
             old_state.state,
             new_state.state,
             new_state.context.user_id if new_state.context else "None"
         )
         
         # Schedule the async work
-        hass.async_add_job(async_handle_state_change, changed_entity_id, new_state, old_state)
+        hass.async_add_job(async_handle_state_change, entity_id, new_state, old_state)
     
     # Listen for all state change events
     hass.bus.async_listen(EVENT_STATE_CHANGED, handle_input_boolean_change)
