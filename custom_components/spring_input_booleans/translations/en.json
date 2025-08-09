@@ -16,7 +16,7 @@
         "title": "Configure Spring Behavior for {name}",
         "description": "Configure how '{name}' ({entity_id}) should behave when its state changes.",
         "data": {
-          "delay_seconds": "Delay before reversing state (0-300 seconds, default: 30)",
+          "delay_seconds": "Delay before reversing state (0-60 seconds)",
           "enable_notifications": "Enable notifications when turned off",
           "notification_service": "Notification service to use",
           "phone_entity_ids": "Phone entity IDs (comma-separated, e.g., mobile_app_john_phone, mobile_app_jane_phone)",
@@ -40,7 +40,7 @@
         "title": "Configure Spring Behavior - {entity_id}",
         "description": "Modify the spring behavior settings for this input boolean.",
         "data": {
-          "delay_seconds": "Delay before reversing state (0-300 seconds, default: 30)",
+          "delay_seconds": "Delay before reversing state (0-60 seconds)",
           "enable_notifications": "Enable notifications when turned off",
           "notification_service": "Notification service to use",
           "phone_entity_ids": "Phone entity IDs (comma-separated)",

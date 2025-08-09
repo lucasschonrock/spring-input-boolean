@@ -38,9 +38,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = entry.data
     
-    # Store active delays for action overrides
-    hass.data.setdefault(f"{DOMAIN}_delays", {})
-    
     # Add options update listener
     entry.async_on_unload(entry.add_update_listener(async_update_options))
     
@@ -68,50 +65,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     processing_entities = {}  # entity_id -> timestamp when we started processing
     import time
     
-    # Listen for mobile app actionable notification events
-    @callback
-    def _handle_mobile_app_action(event: Event) -> None:
-        # Android uses 'action', iOS uses 'actionName'
-        action: str | None = event.data.get("action") or event.data.get("actionName")
-        if not action or not isinstance(action, str):
-            return
-
-        # Expected formats: "SIB_OFF_10::<entity_id>", "SIB_OFF_20::<entity_id>", "SIB_REACTIVATE::<entity_id>"
-        if not action.startswith("SIB_"):
-            return
-
-        try:
-            action_key, target = action.split("::", 1)
-        except ValueError:
-            return
-
-        if target != entity_id:
-            return
-
-        delay_key = f"{DOMAIN}_delays"
-        if action_key == "SIB_OFF_10":
-            hass.data[delay_key][entity_id] = 10
-            _LOGGER.info("Action received: Off 10s for %s", entity_id)
-        elif action_key == "SIB_OFF_20":
-            hass.data[delay_key][entity_id] = 20
-            _LOGGER.info("Action received: Off 20s for %s", entity_id)
-        elif action_key == "SIB_REACTIVATE":
-            hass.data[delay_key][entity_id] = 0
-            _LOGGER.info("Action received: Reactivate now for %s", entity_id)
-
-    # Register listeners for both Android/iOS mobile app events
-    remove_mobile_app = hass.bus.async_listen("mobile_app_notification_action", _handle_mobile_app_action)
-    remove_ios = hass.bus.async_listen("ios.action_fired", _handle_mobile_app_action)
-    entry.async_on_unload(remove_mobile_app)
-    entry.async_on_unload(remove_ios)
-    
-    # Log available mobile app notify services for debugging
-    mobile_services = [s for s in hass.services.async_services().get("notify", {}).keys() if "mobile_app" in s]
-    if mobile_services:
-        _LOGGER.info("Available mobile app notify services: %s", mobile_services)
-    else:
-        _LOGGER.warning("No mobile app notify services found. Make sure the Home Assistant mobile app is installed and configured.")
-    
     async def async_handle_state_change(changed_entity_id: str, new_state, old_state) -> None:
         """Async function to handle the state change with delay."""
         # Only process if this is our configured entity
@@ -135,97 +88,56 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             # Send notification if the boolean was turned off and notifications are enabled
             if (new_state_value == "off" and old_state.state == "on" and enable_notifications):
                 entity_name = new_state.attributes.get("friendly_name", changed_entity_id)
-                notification_message = f"Input boolean '{entity_name}' was turned off and will reactivate in {delay_seconds} seconds"
+                notification_message = f"Input boolean '{entity_name}' was turned off"
                 
                 _LOGGER.info("Sending notification: %s", notification_message)
                 
-                # Prepare notification data with actions
+                # Prepare notification data
                 notification_data = {
                     "title": "Spring Input Boolean",
                     "message": notification_message,
                     "data": {
                         "priority": "normal",
-                        "tag": f"spring_input_boolean_{changed_entity_id}",
-                        "actions": [
-                            {"action": f"SIB_OFF_10::{changed_entity_id}", "title": "Off for 10s"},
-                            {"action": f"SIB_OFF_20::{changed_entity_id}", "title": "Off for 20s"},
-                            {"action": f"SIB_REACTIVATE::{changed_entity_id}", "title": "Reactivate Now"}
-                        ]
+                        "tag": "spring_input_boolean"
                     }
                 }
                 
-                # Only send to specific targets if specified, otherwise don't send at all
+                # Add target entity IDs if specified
                 if phone_entity_ids:
-                    # Resolve service: use notify.notify for aggregator/targets
-                    service_to_call = "notify"
-                    if notification_service not in ("notify", "mobile_app"):
-                        service_to_call = notification_service
-
-                    try:
-                        if service_to_call == "notify":
-                            # For each phone entity ID, try to send individually
-                            for phone_id in phone_entity_ids:
-                                try:
-                                    # Determine the correct service name
-                                    if phone_id.startswith("mobile_app_"):
-                                        # Already has prefix, use as-is
-                                        service_name = phone_id
-                                    else:
-                                        # Add prefix
-                                        service_name = f"mobile_app_{phone_id}"
-                                    
-                                    if hass.services.has_service("notify", service_name):
-                                        payload = dict(notification_data)
-                                        await hass.services.async_call(
-                                            "notify",
-                                            service_name,
-                                            payload,
-                                            blocking=False,
-                                        )
-                                        _LOGGER.debug("Notification sent via notify.%s", service_name)
-                                    else:
-                                        available_services = [s for s in hass.services.async_services().get("notify", {}).keys() if "mobile_app" in s]
-                                        _LOGGER.warning("Notify service %s not found. Available mobile app services: %s", 
-                                                      service_name, available_services)
-                                except Exception as e:
-                                    _LOGGER.warning("Failed to send notification to %s: %s", phone_id, e)
-                        else:
-                            # Custom notifier (no targets)
+                    notification_data["target"] = phone_entity_ids
+                
+                # Send notification using the configured service
+                try:
+                    await hass.services.async_call(
+                        "notify",
+                        notification_service,
+                        notification_data,
+                        blocking=False
+                    )
+                    _LOGGER.debug("Notification sent successfully via notify.%s", notification_service)
+                except Exception as e:
+                    _LOGGER.warning("Failed to send notification via notify.%s: %s", notification_service, e)
+                    
+                    # Fallback: Try the default notify service if the configured one failed
+                    if notification_service != "notify":
+                        try:
+                            fallback_data = notification_data.copy()
+                            # Remove target for fallback to avoid errors
+                            if "target" in fallback_data:
+                                del fallback_data["target"]
+                            
                             await hass.services.async_call(
                                 "notify",
-                                service_to_call,
-                                notification_data,
-                                blocking=False,
+                                "notify",
+                                fallback_data,
+                                blocking=False
                             )
-                            _LOGGER.debug(
-                                "Notification sent via notify.%s (no explicit targets)",
-                                service_to_call,
-                            )
-                    except Exception as e:
-                        _LOGGER.warning(
-                            "Failed to send notification via notify.%s: %s",
-                            service_to_call,
-                            e,
-                        )
-                else:
-                    _LOGGER.debug("No phone entity IDs configured, skipping notification")
+                            _LOGGER.debug("Notification sent successfully via fallback notify.notify")
+                        except Exception as e2:
+                            _LOGGER.warning("Failed to send notification via fallback notify.notify: %s", e2)
             
-            # Check for action override and use that delay instead
-            delay_key = f"{DOMAIN}_delays"
-            actual_delay = hass.data[delay_key].get(changed_entity_id, delay_seconds)
-            
-            # Clear the override after using it
-            if changed_entity_id in hass.data[delay_key]:
-                del hass.data[delay_key][changed_entity_id]
-                _LOGGER.debug("Using action override delay: %d seconds for %s", actual_delay, changed_entity_id)
-            else:
-                _LOGGER.debug("Using default delay: %d seconds for %s", actual_delay, changed_entity_id)
-            
-            # Wait for the actual delay (which might be overridden by action)
-            if actual_delay > 0:
-                await asyncio.sleep(actual_delay)
-            else:
-                _LOGGER.debug("Immediate reactivation requested for %s", changed_entity_id)
+            # Wait configured delay before reversing the state
+            await asyncio.sleep(delay_seconds)
             
             # Double-check: Make sure the entity still exists and hasn't changed again
             current_state = hass.states.get(changed_entity_id)
@@ -262,7 +174,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 changed_entity_id,
                 new_state_value,
                 old_state.state,
-                actual_delay
+                delay_seconds
             )
             
         finally:

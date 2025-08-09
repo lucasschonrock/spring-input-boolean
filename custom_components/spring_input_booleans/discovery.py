@@ -1,7 +1,9 @@
 """Discovery for Spring Input Boolean devices."""
 import logging
 
+from homeassistant.config_entries import ConfigFlow
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.discovery_flow import async_create_flow
 
 from .const import DOMAIN
 
@@ -45,12 +47,10 @@ async def async_start_discovery(hass: HomeAssistant) -> None:
             "unique_id": unique_id,
         }
         
-        # Start discovery flow for this entity using the flow manager
-        try:
-            await hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": "discovery"},
-                data=discovery_info,
-            )
-        except Exception as e:
-            _LOGGER.warning("Failed to start discovery flow for %s: %s", entity_id, e)
+        # Start discovery flow for this entity
+        async_create_flow(
+            hass,
+            DOMAIN,
+            context={"source": "discovery"},
+            data=discovery_info,
+        )

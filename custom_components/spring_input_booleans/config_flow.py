@@ -125,7 +125,7 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Build form schema
         schema_dict = {
             vol.Optional(CONF_DELAY_SECONDS, default=DEFAULT_DELAY_SECONDS): vol.All(
-                vol.Coerce(int), vol.Range(min=0, max=300)
+                vol.Coerce(int), vol.Range(min=0, max=60)
             ),
             vol.Optional(CONF_ENABLE_NOTIFICATIONS, default=DEFAULT_ENABLE_NOTIFICATIONS): bool,
         }
@@ -210,7 +210,7 @@ class SpringInputBooleansOptionsFlow(config_entries.OptionsFlow):
         # Build schema
         schema_dict = {
             vol.Optional(CONF_DELAY_SECONDS, default=delay_seconds): vol.All(
-                vol.Coerce(int), vol.Range(min=0, max=300)
+                vol.Coerce(int), vol.Range(min=0, max=60)
             ),
             vol.Optional(CONF_ENABLE_NOTIFICATIONS, default=enable_notifications): bool,
         }
