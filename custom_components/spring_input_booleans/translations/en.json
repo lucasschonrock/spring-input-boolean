@@ -2,10 +2,17 @@
   "config": {
     "step": {
       "user": {
-        "title": "Spring Input Boolean - Manual Configuration",
-        "description": "Select an input_boolean to configure spring behavior for. Found {count} input boolean(s).",
+        "title": "Spring Input Boolean Setup",
+        "description": "Choose how to set up Spring Input Boolean devices:\n\n{info}",
         "data": {
-          "entity_id": "Input Boolean Entity"
+          "setup_mode": "Setup Mode"
+        }
+      },
+      "manual": {
+        "title": "Manual Setup",
+        "description": "Enter the entity ID of the input_boolean you want to configure.\n\nAvailable entities: {available_entities}",
+        "data": {
+          "entity_id": "Input Boolean Entity ID"
         }
       },
       "confirm_discovery": {
@@ -26,7 +33,10 @@
     },
     "error": {
       "custom_service_required": "Custom service name is required when 'Custom notification service' is selected",
-      "no_input_booleans": "No input_boolean entities found in your system"
+      "no_input_booleans": "No input_boolean entities found in your system",
+      "invalid_entity_id": "Entity ID must start with 'input_boolean.'",
+      "entity_not_found": "This input_boolean entity does not exist in your system",
+      "already_configured": "This input_boolean is already configured for spring behavior"
     },
     "abort": {
       "already_configured": "This input_boolean is already configured",

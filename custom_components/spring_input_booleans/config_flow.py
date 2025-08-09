@@ -38,12 +38,80 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle user initiated configuration (redirect to discovery)."""
-        # Since we use discovery, abort manual configuration and direct users to discovery
-        return self.async_abort(
-            reason="use_discovery",
+        """Handle user initiated configuration with manual option."""
+        if user_input is not None:
+            if user_input.get("setup_mode") == "discovery":
+                return self.async_abort(
+                    reason="use_discovery",
+                    description_placeholders={
+                        "info": "This integration uses automatic discovery. Look for discovered Spring Input Boolean devices in the 'Discovered' section below."
+                    }
+                )
+            elif user_input.get("setup_mode") == "manual":
+                return await self.async_step_manual()
+
+        # Show choice between discovery and manual setup
+        data_schema = vol.Schema({
+            vol.Required("setup_mode", default="discovery"): vol.In({
+                "discovery": "Use automatic discovery (recommended)",
+                "manual": "Manual setup (enter entity ID)"
+            })
+        })
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=data_schema,
             description_placeholders={
-                "info": "This integration uses automatic discovery. Look for discovered Spring Input Boolean devices in the 'Discovered' section below."
+                "info": "Choose how to set up Spring Input Boolean devices"
+            }
+        )
+
+    async def async_step_manual(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle manual entity ID input."""
+        errors = {}
+
+        if user_input is not None:
+            entity_id = user_input["entity_id"].strip()
+            
+            # Validate entity_id format
+            if not entity_id.startswith("input_boolean."):
+                errors["entity_id"] = "invalid_entity_id"
+            else:
+                # Check if entity exists
+                state = self.hass.states.get(entity_id)
+                if not state:
+                    errors["entity_id"] = "entity_not_found"
+                else:
+                    # Check if already configured
+                    unique_id = f"spring_{entity_id}"
+                    existing_entries = self.hass.config_entries.async_entries(DOMAIN)
+                    already_configured = any(
+                        entry.unique_id == unique_id for entry in existing_entries
+                    )
+                    
+                    if already_configured:
+                        errors["entity_id"] = "already_configured"
+                    else:
+                        # Set up for configuration
+                        self._entity_id = entity_id
+                        self._name = f"{state.attributes.get('friendly_name', entity_id)} Spring Configuration"
+                        return await self.async_step_config()
+
+        # Get all input_boolean entities for suggestions
+        input_boolean_entities = self.hass.states.async_entity_ids("input_boolean")
+        
+        data_schema = vol.Schema({
+            vol.Required("entity_id"): str,
+        })
+
+        return self.async_show_form(
+            step_id="manual",
+            data_schema=data_schema,
+            errors=errors,
+            description_placeholders={
+                "available_entities": ", ".join(input_boolean_entities) if input_boolean_entities else "None found"
             }
         )
 
