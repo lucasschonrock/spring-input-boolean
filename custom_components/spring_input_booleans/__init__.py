@@ -1,4 +1,5 @@
 """Spring Input Booleans integration for Home Assistant."""
+import asyncio
 import logging
 from typing import Any
 
@@ -20,9 +21,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Spring Input Booleans from a config entry."""
     
-    @callback
-    def handle_input_boolean_change(event: Event) -> None:
-        """Handle input_boolean state changes and reverse them."""
+    async def handle_input_boolean_change(event: Event) -> None:
+        """Handle input_boolean state changes and reverse them after a 2-second delay."""
         entity_id = event.data.get("entity_id")
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
@@ -39,11 +39,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         new_state_value = new_state.state
         
         _LOGGER.debug(
-            "Input boolean %s changed from %s to %s, reversing...",
+            "Input boolean %s changed from %s to %s, waiting 2 seconds before reversing...",
             entity_id,
             old_state.state,
             new_state_value
         )
+        
+        # Wait 2 seconds before reversing the state
+        await asyncio.sleep(2)
         
         # Determine the reverse action
         if new_state_value == "on":
@@ -57,24 +60,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
             
         # Call the service to reverse the state
-        hass.async_create_task(
-            hass.services.async_call(
-                "input_boolean",
-                service_action,
-                {"entity_id": entity_id},
-                blocking=False
-            )
+        await hass.services.async_call(
+            "input_boolean",
+            service_action,
+            {"entity_id": entity_id},
+            blocking=False
         )
         
         _LOGGER.info(
-            "Reversed input boolean %s state from %s back to %s",
+            "Reversed input boolean %s state from %s back to %s after 2-second delay",
             entity_id,
             new_state_value,
             old_state.state
         )
     
     # Listen for all state change events
-    hass.bus.async_listen(EVENT_STATE_CHANGED, handle_input_boolean_change)
+    def sync_handle_input_boolean_change(event: Event) -> None:
+        """Sync wrapper for the async handler."""
+        hass.async_create_task(handle_input_boolean_change(event))
+    
+    hass.bus.async_listen(EVENT_STATE_CHANGED, sync_handle_input_boolean_change)
     
     _LOGGER.info("Spring Input Booleans integration loaded successfully")
     
