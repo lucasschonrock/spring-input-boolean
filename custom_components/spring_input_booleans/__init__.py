@@ -166,22 +166,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             # For each phone entity ID, try to send individually
                             for phone_id in phone_entity_ids:
                                 try:
-                                    # First check if the notify service exists
-                                    notify_service = f"notify.mobile_app_{phone_id}" if not phone_id.startswith("mobile_app_") else f"notify.{phone_id}"
+                                    # Determine the correct service name
+                                    if phone_id.startswith("mobile_app_"):
+                                        # Already has prefix, use as-is
+                                        service_name = phone_id
+                                    else:
+                                        # Add prefix
+                                        service_name = f"mobile_app_{phone_id}"
                                     
-                                    if hass.services.has_service("notify", notify_service.replace("notify.", "")):
+                                    if hass.services.has_service("notify", service_name):
                                         payload = dict(notification_data)
                                         await hass.services.async_call(
                                             "notify",
-                                            notify_service.replace("notify.", ""),
+                                            service_name,
                                             payload,
                                             blocking=False,
                                         )
-                                        _LOGGER.debug("Notification sent via %s", notify_service)
+                                        _LOGGER.debug("Notification sent via notify.%s", service_name)
                                     else:
+                                        available_services = [s for s in hass.services.async_services().get("notify", {}).keys() if "mobile_app" in s]
                                         _LOGGER.warning("Notify service %s not found. Available mobile app services: %s", 
-                                                      notify_service, 
-                                                      [s for s in hass.services.async_services().get("notify", {}).keys() if "mobile_app" in s])
+                                                      service_name, available_services)
                                 except Exception as e:
                                     _LOGGER.warning("Failed to send notification to %s: %s", phone_id, e)
                         else:
