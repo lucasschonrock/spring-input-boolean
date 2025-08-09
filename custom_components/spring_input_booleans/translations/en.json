@@ -1,0 +1,66 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Spring Input Booleans Configuration",
+        "description": "This integration will automatically reverse any changes made to input_boolean entities. When an input_boolean is turned on, it will immediately be turned off, and vice versa.",
+        "data": {
+          "auto_discover": "Auto-discover and monitor all input boolean entities"
+        }
+      },
+      "entities": {
+        "title": "Select Input Boolean Entities",
+        "description": "Found {count} input boolean(s) in your system. Select which ones you want to apply the spring behavior to.",
+        "data": {
+          "monitored_entities": "Input boolean entities to monitor"
+        }
+      },
+      "notifications": {
+        "title": "Notification Configuration",
+        "description": "Configure notification settings. You can enable notifications to be sent when input booleans are turned off, before they are automatically turned back on.",
+        "data": {
+          "enable_notifications": "Enable notifications when input booleans are turned off",
+          "notification_service": "Notification service to use",
+          "phone_entity_ids": "Phone entity IDs (comma-separated, e.g., mobile_app_john_phone, mobile_app_jane_phone)",
+          "custom_service_name": "Custom notification service name (e.g., telegram_bot, my_custom_notifier)"
+        }
+      }
+    },
+    "error": {
+      "custom_service_required": "Custom service name is required when 'Custom notification service' is selected"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Spring Input Booleans Options",
+        "description": "Choose what you would like to configure:",
+        "data": {
+          "configure_entities": "Configure monitored entities",
+          "configure_notifications": "Configure notification settings"
+        }
+      },
+      "entities": {
+        "title": "Manage Monitored Entities",
+        "description": "Found {count} input boolean(s) in your system. Select which ones you want to apply the spring behavior to.",
+        "data": {
+          "auto_discover": "Auto-discover and monitor new input boolean entities",
+          "monitored_entities": "Input boolean entities to monitor"
+        }
+      },
+      "notifications": {
+        "title": "Notification Settings",
+        "description": "Configure notification settings for when input booleans are turned off.",
+        "data": {
+          "enable_notifications": "Enable notifications when input booleans are turned off",
+          "notification_service": "Notification service to use",
+          "phone_entity_ids": "Phone entity IDs (comma-separated)",
+          "custom_service_name": "Custom notification service name"
+        }
+      }
+    },
+    "error": {
+      "custom_service_required": "Custom service name is required when 'Custom notification service' is selected"
+    }
+  }
+}
