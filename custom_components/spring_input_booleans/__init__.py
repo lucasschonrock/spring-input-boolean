@@ -3,9 +3,8 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EVENT_STATE_CHANGED, Platform
+from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import Event, HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.typing import ConfigType
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,10 +48,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Determine the reverse action
         if new_state_value == "on":
             # If it turned on, turn it off
-            target_service = "input_boolean.turn_off"
+            service_action = "turn_off"
         elif new_state_value == "off":
             # If it turned off, turn it on
-            target_service = "input_boolean.turn_on"
+            service_action = "turn_on"
         else:
             # Unknown state, skip
             return
@@ -61,7 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.async_create_task(
             hass.services.async_call(
                 "input_boolean",
-                target_service.split(".")[1],
+                service_action,
                 {"entity_id": entity_id},
                 blocking=False
             )
@@ -74,8 +73,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             old_state.state
         )
     
-    # Listen for state change events
-    async_track_state_change_event(hass, None, handle_input_boolean_change)
+    # Listen for all state change events
+    hass.bus.async_listen(EVENT_STATE_CHANGED, handle_input_boolean_change)
     
     _LOGGER.info("Spring Input Booleans integration loaded successfully")
     
