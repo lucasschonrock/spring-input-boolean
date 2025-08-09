@@ -1,7 +1,7 @@
 {
   "domain": "spring_input_booleans",
-  "name": "Spring Input Booleans",
-  "version": "1.0.1",
+  "name": "Spring Input Booleans", 
+  "version": "2.0.0",
   "documentation": "https://github.com/lucasschonrock/hacs-spring-input-booleans",
   "issue_tracker": "https://github.com/lucasschonrock/hacs-spring-input-booleans/issues",
   "dependencies": [],
