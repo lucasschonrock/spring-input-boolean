@@ -105,6 +105,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(remove_mobile_app)
     entry.async_on_unload(remove_ios)
     
+    # Log available mobile app notify services for debugging
+    mobile_services = [s for s in hass.services.async_services().get("notify", {}).keys() if "mobile_app" in s]
+    if mobile_services:
+        _LOGGER.info("Available mobile app notify services: %s", mobile_services)
+    else:
+        _LOGGER.warning("No mobile app notify services found. Make sure the Home Assistant mobile app is installed and configured.")
+    
     async def async_handle_state_change(changed_entity_id: str, new_state, old_state) -> None:
         """Async function to handle the state change with delay."""
         # Only process if this is our configured entity
@@ -156,18 +163,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
                     try:
                         if service_to_call == "notify":
-                            payload = dict(notification_data)
-                            payload["target"] = phone_entity_ids
-                            await hass.services.async_call(
-                                "notify",
-                                "notify",
-                                payload,
-                                blocking=False,
-                            )
-                            _LOGGER.debug(
-                                "Notification sent via notify.notify to targets: %s",
-                                phone_entity_ids,
-                            )
+                            # For each phone entity ID, try to send individually
+                            for phone_id in phone_entity_ids:
+                                try:
+                                    # First check if the notify service exists
+                                    notify_service = f"notify.mobile_app_{phone_id}" if not phone_id.startswith("mobile_app_") else f"notify.{phone_id}"
+                                    
+                                    if hass.services.has_service("notify", notify_service.replace("notify.", "")):
+                                        payload = dict(notification_data)
+                                        await hass.services.async_call(
+                                            "notify",
+                                            notify_service.replace("notify.", ""),
+                                            payload,
+                                            blocking=False,
+                                        )
+                                        _LOGGER.debug("Notification sent via %s", notify_service)
+                                    else:
+                                        _LOGGER.warning("Notify service %s not found. Available mobile app services: %s", 
+                                                      notify_service, 
+                                                      [s for s in hass.services.async_services().get("notify", {}).keys() if "mobile_app" in s])
+                                except Exception as e:
+                                    _LOGGER.warning("Failed to send notification to %s: %s", phone_id, e)
                         else:
                             # Custom notifier (no targets)
                             await hass.services.async_call(
