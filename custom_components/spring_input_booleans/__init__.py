@@ -25,40 +25,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     our_context_ids = set()
     max_context_ids = 100  # Limit the size of our tracking set
     
-    async def handle_input_boolean_change(event: Event) -> None:
-        """Handle input_boolean state changes and reverse them after a 2-second delay."""
-        entity_id = event.data.get("entity_id")
-        new_state = event.data.get("new_state")
-        old_state = event.data.get("old_state")
-        
-        # Only process input_boolean entities
-        if not entity_id or not entity_id.startswith("input_boolean."):
-            return
-            
-        # Ignore if no state change or if state is None
-        if not new_state or not old_state or new_state.state == old_state.state:
-            return
-            
-        # Prevent loops: Check if this change was caused by our own service call
-        if new_state.context and new_state.context.id in our_context_ids:
-            _LOGGER.debug(
-                "Ignoring state change for %s - caused by our own service call (context: %s)",
-                entity_id,
-                new_state.context.id
-            )
-            # Remove the context ID from our tracking set to keep it clean
-            our_context_ids.discard(new_state.context.id)
-            return
-            
-        # Additional check: If there's no user_id in context, it might be programmatic
-        # But we still process it unless it's from our own context above
-        if new_state.context and not new_state.context.user_id:
-            _LOGGER.debug(
-                "State change for %s has no user_id - might be programmatic but not from us (context: %s)",
-                entity_id,
-                new_state.context.id
-            )
-            
+    async def async_handle_state_change(entity_id: str, new_state, old_state) -> None:
+        """Async function to handle the state change with delay."""
         # Get the new state value
         new_state_value = new_state.state
         
@@ -97,12 +65,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
             
         # Call the service to reverse the state and track our context
-        response = await hass.services.async_call(
+        await hass.services.async_call(
             "input_boolean",
             service_action,
             {"entity_id": entity_id},
-            blocking=True,
-            return_response=True
+            blocking=True
         )
         
         # Track our context ID to prevent loops
@@ -135,14 +102,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             new_state_value,
             old_state.state
         )
+
+    @callback
+    def handle_input_boolean_change(event: Event) -> None:
+        """Handle input_boolean state changes and reverse them after a 2-second delay."""
+        entity_id = event.data.get("entity_id")
+        new_state = event.data.get("new_state")
+        old_state = event.data.get("old_state")
+        
+        # Only process input_boolean entities
+        if not entity_id or not entity_id.startswith("input_boolean."):
+            return
+            
+        # Ignore if no state change or if state is None
+        if not new_state or not old_state or new_state.state == old_state.state:
+            return
+            
+        # Prevent loops: Check if this change was caused by our own service call
+        if new_state.context and new_state.context.id in our_context_ids:
+            _LOGGER.debug(
+                "Ignoring state change for %s - caused by our own service call (context: %s)",
+                entity_id,
+                new_state.context.id
+            )
+            # Remove the context ID from our tracking set to keep it clean
+            our_context_ids.discard(new_state.context.id)
+            return
+            
+        # Additional check: If there's no user_id in context, it might be programmatic
+        # But we still process it unless it's from our own context above
+        if new_state.context and not new_state.context.user_id:
+            _LOGGER.debug(
+                "State change for %s has no user_id - might be programmatic but not from us (context: %s)",
+                entity_id,
+                new_state.context.id
+            )
+            
+        # Schedule the async work
+        hass.async_add_job(async_handle_state_change, entity_id, new_state, old_state)
     
     # Listen for all state change events
-    @callback
-    def sync_handle_input_boolean_change(event: Event) -> None:
-        """Sync wrapper for the async handler."""
-        hass.async_add_job(handle_input_boolean_change, event)
-    
-    hass.bus.async_listen(EVENT_STATE_CHANGED, sync_handle_input_boolean_change)
+    hass.bus.async_listen(EVENT_STATE_CHANGED, handle_input_boolean_change)
     
     _LOGGER.info("Spring Input Booleans integration loaded successfully")
     
