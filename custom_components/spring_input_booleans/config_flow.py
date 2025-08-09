@@ -38,38 +38,12 @@ class SpringInputBooleansConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle manual configuration."""
-        # Get all input_boolean entities
-        input_booleans = {}
-        for entity_id in self.hass.states.async_entity_ids("input_boolean"):
-            state = self.hass.states.get(entity_id)
-            if state:
-                friendly_name = state.attributes.get("friendly_name", entity_id)
-                input_booleans[entity_id] = f"{friendly_name} ({entity_id})"
-
-        if not input_booleans:
-            return self.async_abort(reason="no_input_booleans")
-
-        if user_input is not None:
-            entity_id = user_input[CONF_ENTITY_ID]
-            
-            # Check if already configured
-            await self.async_set_unique_id(f"spring_{entity_id}")
-            self._abort_if_unique_id_configured()
-            
-            self._entity_id = entity_id
-            state = self.hass.states.get(entity_id)
-            self._name = state.attributes.get("friendly_name", entity_id) if state else entity_id
-            
-            return await self.async_step_config()
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_ENTITY_ID): vol.In(input_booleans),
-            }),
+        """Handle user initiated configuration (redirect to discovery)."""
+        # Since we use discovery, abort manual configuration and direct users to discovery
+        return self.async_abort(
+            reason="use_discovery",
             description_placeholders={
-                "description": f"Select an input_boolean to configure spring behavior for. Found {len(input_booleans)} input boolean(s)."
+                "info": "This integration uses automatic discovery. Look for discovered Spring Input Boolean devices in the 'Discovered' section below."
             }
         )
 
